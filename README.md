@@ -5,6 +5,6 @@ Optical properties related to spatial dispersion (Q).
 Optical rotation and circular dichroism.
 
 ## Dependencies:
-numpy
-spglib (symmetrization)
-Phonopy (read POSCAR)
+numpy \n
+spglib (symmetrization) \n
+Phonopy (read POSCAR) \n
