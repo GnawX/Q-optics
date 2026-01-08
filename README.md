@@ -1,11 +1,18 @@
 # Q-optics
-Optical properties related to spatial dispersion (Q).
 
-## Current implementations: 
-Optical rotation and circular dichroism.  
-(Optical activity is from the antisymmetric part of dielectric tensor, while the symmetric part gives gyrotropic birefringence and nonreciprocal direction dichroism, which can be obtained with minor modifications.)
+**Q-optics** computes optical response functions associated with **spatial dispersion** (finite wavevector **q**), by evaluating the **first-order expansion in q** of the dielectric tensor \( \varepsilon_{ij}(\omega,\mathbf{q}) \).
 
-## Dependencies:
-numpy  
-spglib (symmetrization)  
-Phonopy (read POSCAR)  
+## Implemented features
+
+- **Natural optical activity** (NOA)
+  - **Optical rotation**
+  - **Circular dichroism**
+
+In this framework, NOA is obtained from the **antisymmetric** part of the dielectric tensor. The **symmetric** part contains additional spatial-dispersion phenomena such as **gyrotropic birefringence** and **nonreciprocal directional dichroism**, which can be enabled with minor extensions to the current implementation.
+
+## Dependencies
+
+- `numpy`
+- `spglib` (symmetrization)
+- `phonopy` (reading `POSCAR`)
+
