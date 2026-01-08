@@ -1,6 +1,7 @@
 import numpy as np
-from consts import ftype, ctype, C_LIGHT, AU2A, AU2EV, PI
+import torch
 from helper import readData, symmetrize_axial_tensor
+from consts import ftype, ctype, device, PI, C_LIGHT, AU2A, AU2EV
 
 
 class Electrons:
@@ -12,11 +13,11 @@ class Electrons:
         nelecs (int): Number of electrons.
         nkpts (int): Number of k-points.
         nbands (int): Number of bands.
-        kvecs (np.ndarray): Array of k-point vectors (nkpts, 3).
-        weights (np.ndarray): Weights of each k-point in the Brillouin zone (nkpts,).
-        eig (np.ndarray): Eigenvalues array (nspins, nkpts, nbands).
-        occ (np.ndarray): Occupations array (nspins, nkpts, nbands).
-        noccs (np.ndarray): Number of occupied bands for each spin channel.
+        kvecs (torch.Tensor): Array of k-point vectors (nkpts, 3).
+        weights (torch.Tensor): Weights of each k-point in the Brillouin zone (nkpts,).
+        eig (torch.Tensor): Eigenvalues array (nspins, nkpts, nbands).
+        occ (torch.Tensor): Occupations array (nspins, nkpts, nbands).
+        noccs (torch.Tensor): Number of occupied bands for each spin channel.
         lgamma (bool): Whether gamma-only k-point sampling is used.
         nspinors (int): Number of spinors (1 for collinear spin, 2 for non-collinear).
     """
@@ -44,16 +45,18 @@ class Electrons:
             self.nelecs, self.nkpts, self.nbands = map(int, f.readline().split())
 
             # Allocate arrays
-            self.kvecs = np.zeros((self.nkpts, 3), dtype=ftype)
-            self.weights = np.zeros(self.nkpts, dtype=ftype)
-            self.eig = np.zeros((self.nspins, self.nkpts, self.nbands), dtype=ftype)
-            self.occ = np.zeros((self.nspins, self.nkpts, self.nbands), dtype=ftype)
+            self.kvecs = torch.zeros((self.nkpts, 3), dtype=ftype, device=device)
+            self.weights = torch.zeros(self.nkpts, dtype=ftype, device=device)
+            self.eig = torch.zeros((self.nspins, self.nkpts, self.nbands), dtype=ftype, device=device)
+            self.occ = torch.zeros((self.nspins, self.nkpts, self.nbands), dtype=ftype, device=device)
 
             # Read k-points and band data
             for i in range(self.nkpts):
                 f.readline()  # empty line
                 line = list(map(float, f.readline().split()))
-                self.kvecs[i, :] = line[:3]
+                self.kvecs[i, 0] = line[0]
+                self.kvecs[i, 1] = line[1]
+                self.kvecs[i, 2] = line[2]
                 self.weights[i] = line[3]
 
                 for j in range(self.nbands):
@@ -85,7 +88,7 @@ class Electrons:
         return noccs
     
     def apply_scissors_correction(
-        self, delta: ftype, stretch_cb: ftype = 1.0, stretch_vb: ftype = 1.0
+        self, delta, stretch_cb: 1, stretch_vb: 1
     ) -> None:
         """
         Apply a scissor correction and optional stretching to conduction and valence bands.
@@ -108,12 +111,13 @@ class Electrons:
         assert hasattr(self, "eig") and self.eig.ndim == 3, "Expected eig to have shape (nspin, nk, nbands)"
 
         eig = self.eig
+
         for ispin in range(self.nspins):
             top_valence_idx = self.noccs[ispin] - 1
             bottom_conduction_idx = top_valence_idx + 1
 
-            vbm = np.max(eig[ispin, :, top_valence_idx])
-            cbm = np.min(eig[ispin, :, bottom_conduction_idx])
+            vbm = torch.max(eig[ispin, :, top_valence_idx])
+            cbm = torch.min(eig[ispin, :, bottom_conduction_idx])
 
             # Apply to conduction bands
             eig[ispin, :, bottom_conduction_idx:] = (
@@ -125,9 +129,9 @@ class Electrons:
                 (eig[ispin, :, :bottom_conduction_idx] - vbm) * stretch_vb + vbm
             )
 
-        self.eig = eig.astype(ftype, copy=False)
+        self.eig = eig.to(ftype)
 
-    def read_waveder(self, filename: str = 'WAVEDER') -> np.ndarray:
+    def read_waveder(self, filename: str = 'WAVEDER') -> torch.Tensor:
         """
         Read position matrix elements (inter-band Berry connection) from a WAVEDER file.
 
@@ -143,7 +147,7 @@ class Electrons:
             filename (str): Path to the WAVEDER file. Defaults to 'WAVEDER'.
 
         Return:
-            rmn (np.ndarray): Array of shape (nspin, nkpts, nbands, ncder, 3)
+            rmn (torch.Tensor): Array of shape (nspin, nkpts, nbands, ncder, 3)
                                containing position matrix elements.
         """
         try:
@@ -157,24 +161,27 @@ class Electrons:
                 if nspins != self.nspins:
                     raise ValueError(f"nspins mismatch: file={nspins}, expected={self.nspins}")
 
-                _ = readData(fp, np.float_)  # nodes_in_dielectric_function
-                _ = readData(fp, np.float_)  # wplasmon
+                _ = readData(fp, np.float64)  # nodes_in_dielectric_function
+                _ = readData(fp, np.float64)  # wplasmon
 
                 if self.lgamma:
-                    cder_flat = readData(fp, np.float_).astype(ftype, copy=False)
+                    cder_flat_np = readData(fp, np.float64)
+                    cder_flat = torch.from_numpy(cder_flat_np.copy()).to(device).to(ftype)
                 else:
-                    cder_flat = readData(fp, np.complex64).astype(ctype, copy=False)
+                    cder_flat_np = readData(fp, np.complex64)
+                    cder_flat = torch.from_numpy(cder_flat_np.copy()).to(device).to(ctype)
 
-                # the binary has Fortran shape: (nbands, ncder, nkpts, nspins, 3)
+                # Original shape: (3, nspins, nkpts, ncder, nbands)
                 cder = cder_flat.reshape((3, nspins, nkpts, ncder, nbands))
 
                 # Transpose to: (nspins, nkpts, nbands, ncder, 3)
-                rmn = -cder.transpose(1, 2, 4, 3, 0) # WAVEDER contains <m|-r|n>
+                rmn = -cder.permute(1, 2, 4, 3, 0)
 
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Failed to read WAVEDER file '{filename}': {e}")
         return rmn
-    def read_eigder(self, filename: str = 'EIGDER') -> np.ndarray:
+    
+    def read_eigder(self, filename: str = 'EIGDER') -> torch.Tensor:
         """
         Read band velocities from a VASP-generated EIGDER file.
     
@@ -185,7 +192,7 @@ class Electrons:
             filename (str): Path to the EIGDER file. Defaults to 'EIGDER'.
 
         Return:
-            eig_der (np.ndarray): Array of shape (nspins, nkpts, nbands, 3)
+            eig_der (torch.Tensor): Array of shape (nspins, nkpts, nbands, 3)
                                containing the band velocities.
         """
         try:
@@ -199,20 +206,21 @@ class Electrons:
                 if nspins != self.nspins:
                     raise ValueError(f"nspins mismatch: file={nspins}, expected={self.nspins}")
 
-                energy_der_flat = readData(fp, np.float64).astype(ftype, copy=False)
+                energy_der_flat_np = readData(fp, np.float64)
+                energy_der_flat = torch.from_numpy(energy_der_flat_np.copy()).to(device).to(ftype)
             
                 # Original shape: (3, nspins, nkpts, nbands)
                 energy_der = energy_der_flat.reshape((3, nspins, nkpts, nbands))
             
                 # Final shape: (nspins, nkpts, nbands, 3)
-                eig_der = energy_der.transpose(1, 2, 3, 0)
+                eig_der = energy_der.permute(1,2,3,0)
 
         except (OSError, ValueError) as e:
             raise RuntimeError(f"Failed to read EIGDER file '{filename}': {e}")
 
         return eig_der
     
-    def calc_velocity_matrix_elements(self, rmn: np.ndarray, eig_der: np.ndarray) -> np.ndarray:
+    def calc_velocity_matrix_elements(self, rmn: torch.Tensor, eig_der: torch.Tensor) -> torch.Tensor:
         """
         Calculate the velocity matrix elements between Bloch states.
 
@@ -225,14 +233,14 @@ class Electrons:
 
         Parameters
         ----------
-        rmn : np.ndarray
+        rmn : torch.Tensor
             Position matrix elements with shape (nspins, nkpts, nbands, nbands, 3).
-        eig_der : np.ndarray
+        eig_der : torch.Tensor
             Band velocity with shape (nspins, nkpts, nbands, 3).
 
         Returns
         -------
-        vmn : np.ndarray
+        vmn : torch.Tensor
             Velocity matrix elements with the same shape as `rmn`.
         """
         # check the dimensions of rmn
@@ -251,15 +259,15 @@ class Electrons:
         diagonal_indices = np.arange(self.nbands)
 
         # Assign the diagonal elements directly
-        vmn[:, :, diagonal_indices, diagonal_indices, :] = eig_der[:, :, :, :].astype(vmn.dtype)
+        vmn[:, :, diagonal_indices, diagonal_indices, :] = eig_der[:, :, :, :].to(ctype)
 
         return vmn
     
     def calc_magnetic_dipole_electric_quadrupole(
         self,
-        rmn: np.ndarray,
-        vmn: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+        rmn: torch.Tensor,
+        vmn: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Calculate the magnetic dipole and electric quadrupole transition matrix elements.
 
@@ -276,16 +284,16 @@ class Electrons:
 
         Parameters
         ----------
-        rmn : np.ndarray
+        rmn : torch.Tensor
             Position matrix elements with shape (nspins, nk, nbands, nbands, 3).
-        vmn : np.ndarray
+        vmn : torch.Tensor
             Velocity matrix elements with the same shape as `rmn`.
 
         Returns
         -------
-        M : np.ndarray
+        M : torch.Tensor
             Magnetic dipole matrix elements with shape (nspins, nkpts, nc, nv, 3, 3).
-        Q : np.ndarray
+        Q : torch.Tensor
             Electric quadrupole matrix elements with shape (nspins, nkpts, nc, nv, 3, 3).
         """
         bcb = self.noccs # shape (nspins,)
@@ -300,27 +308,15 @@ class Electrons:
             r2 = rmn
             v1 = vmn
             v2 = vmn
-
-        ns, nk, nc, nb = r1.shape[:4]  # r1, v2
-        nv = r2.shape[3]         # r2, v1
-
-        #W = (
-        #    np.einsum('skmpi,skpnj->skmnij', r1, v1, optimize=True) +
-        #    np.einsum('skmpj,skpni->skmnij', v2, r2, optimize=True)
-        #) / 2
-
-        # matmul and tensordot is much faster than einsum for numpy
-        r1_ = r1.swapaxes(3,4).reshape(ns,nk,nc*3,nb)
-        v1_ = v1.reshape(ns,nk,nb,nv*3)
-        v2_ = v2.swapaxes(3,4).reshape(ns,nk,nc*3,nb)
-        r2_ = r2.reshape(ns,nk,nb,nv*3)
+        
+        # Compute W_ij = (r_i v_j + v_j r_i) / 2
         W = (
-            (r1_ @ v1_).reshape(ns,nk,nc,3,nv,3).swapaxes(3,4) +
-            (v2_ @ r2_).reshape(ns,nk,nc,3,nv,3).transpose(0,1,2,4,5,3)
-        )/2
+            torch.einsum('skmpi,skpnj->skmnij', r1, v1) +
+            torch.einsum('skmpj,skpni->skmnij', v2, r2)
+        ) / 2
 
         # Decompose into symmetric (Q) and antisymmetric (M) parts
-        W_T = W.swapaxes(4,5)  # transpose last two indices
+        W_T = W.transpose(4,5)  # transpose last two indices
         
         Q = (W + W_T) / 2  # symmetric: electric quadrupole
         M = (W - W_T) / 2  # antisymmetric: magnetic dipole
@@ -339,15 +335,15 @@ class Electrons:
     
     def calc_natural_optical_activity(
         self,
-        V: np.ndarray,
-        M: np.ndarray,
-        Q: np.ndarray,
-        vol: ftype,
-        emin: ftype = 0.0,
-        emax: ftype = 10.0,
-        ne: int = 200,
-        eta: ftype = 0.1,
-        rotations: np.ndarray = None
+        V: torch.Tensor,
+        M: torch.Tensor,
+        Q: torch.Tensor,
+        vol, 
+        emin=0,
+        emax=10,
+        ne=200,
+        eta=0.1,
+        rotations: torch.Tensor = None
     ) -> None:
         """
         Compute the natural optical activity tensor γ(ω).
@@ -366,23 +362,24 @@ class Electrons:
             (4π e² / V ℏ) ∑_{cvk} V_i* V_j (v_c^l + v_v^l)/\omega_{cvk}^3 * f(ω)
     
         Args:
-            V (np.ndarray): velocity matrix elements, shape (nspins, nkpts, nbands, nbands, 3)
-            M (np.ndarray): magnetic dipole matrix elements, shape (nspins, nkpts, nc, nv, 3, 3)
-            Q (np.ndarray): electric quadrupole matrix elements, shape (nspins, nkpts, nc, nv, 3, 3)
+            V (torch.Tensor): velocity matrix elements, shape (nspins, nkpts, nbands, nbands, 3)
+            M (torch.Tensor): magnetic dipole matrix elements, shape (nspins, nkpts, nc, nv, 3, 3)
+            Q (torch.Tensor): electric quadrupole matrix elements, shape (nspins, nkpts, nc, nv, 3, 3)
             vol (float): unit cell volume [A^3]
             emin (float): Minimum photon energy [eV]
             emax (float): Maximum photon energy [eV]
             ne (int): Number of energy grid points
             eta (float): Broadening parameter in energy denominator [eV]
-            rotations (np.ndarray, optional): Symmetry operations for symmetrization, shape (nr, 3, 3)
+            rotations (torch.Tensor, optional): Symmetry operations for symmetrization, shape (nr, 3, 3)
         """
 
-        gamma_m = np.zeros((ne, 3, 3), dtype=ctype)
-        gamma_q = np.zeros((ne, 3, 3), dtype=ctype)
-        gamma_v = np.zeros((ne, 3, 3), dtype=ctype)
+
+        gamma_m = torch.zeros((ne, 3, 3), dtype=ctype, device=device)
+        gamma_q = torch.zeros((ne, 3, 3), dtype=ctype, device=device)
+        gamma_v = torch.zeros((ne, 3, 3), dtype=ctype, device=device)
 
         # average velocity vbar = (v_c + v_v ) / 2
-        V_diag = np.diagonal(V, axis1=2, axis2=3).swapaxes(2,3)
+        V_diag = torch.diagonal(V, dim1=2, dim2=3).transpose(2,3)
         vbar = (V_diag[:,:,:,None,:] + V_diag[:,:,None,:,:] ) / 2
 
         # energy difference
@@ -400,11 +397,11 @@ class Electrons:
             ecv = ecv[:,:,c0:,:c0]
 
         # Compute antisymmetric combinations V* M and V* Q
-        vm = np.zeros_like(M)
-        vq = np.zeros_like(M)
-        vv = np.zeros_like(M)
+        vm = torch.zeros_like(M, device=device)
+        vq = torch.zeros_like(M, device=device)
+        vv = torch.zeros_like(M, device=device)
 
-        cyclic_idx = np.array([[1, 2, 0], [2, 0, 1]],dtype=np.int32)  # i, j pairs
+        cyclic_idx = torch.tensor([[1, 2, 0], [2, 0, 1]], device=device)  # i, j pairs
         for l in range(3):
             i, j = cyclic_idx[0], cyclic_idx[1] # shape (3,)
             vm[...,l] = (V[...,i].conj()*M[...,l,j] - V[...,j]*M[...,l,i].conj())/ecv[...,None]**2
@@ -413,42 +410,27 @@ class Electrons:
 
         vv_corr = -2*vv/ecv[...,None,None]
 
-        wtk = self.weights[None,:,None,None,None,None]
-        vm = (vm*wtk).real.astype(ctype)
-        vq = (vq*wtk).real.astype(ctype)
-        vv = (vv*wtk).imag.astype(ctype)
-        vv_corr = (vv_corr*wtk).imag.astype(ctype)
+        wtk = self.weights[None,:,None,None,None,None]  # shape: (nkpts, 1, 1)
+        vm = (vm*wtk).real.to(ctype)
+        vq = (vq*wtk).real.to(ctype)
+        vv = (vv*wtk).imag.to(ctype)
+        vv_corr = (vv_corr*wtk).imag.to(ctype)
 
-        # Compute the energy grid
-
-        omega = np.linspace(emin, emax, ne, dtype=ftype)  # shape: (ne,)
-        
+        omega = torch.linspace(emin, emax, ne, dtype=ftype, device=device)  # shape: (ne,)
         en = omega[:, None, None, None]    # shape: (ne, 1, 1, 1)
         for ik in range(self.nkpts):
 
             w1 = 1 / (en - ecv[:,ik,:,:] + 1j * eta)
             w2 = 1 / (en + ecv[:,ik,:,:] + 1j * eta)
-                         
+                           
             f = w1 - w2  # shape: (ne, nspins, nc, nv)
             g = w1*w1 + w2*w2
 
 
-            gamma_m += np.tensordot(f, vm[:,ik,...], axes=([1,2,3], [0,1,2]))  
-            gamma_q += np.tensordot(f, vq[:,ik,...], axes=([1,2,3], [0,1,2])) 
-            gamma_v += np.tensordot(g, vv[:,ik,...], axes=([1,2,3], [0,1,2])) \
-                   + np.tensordot(f, vv_corr[:,ik,...], axes=([1,2,3], [0,1,2]))
-            
-        #for iomg in range(ne):
-        #    omg = omega[iomg]
-        #    w1 = 1 / (omg - ecv + 1j * eta)
-        #    w2 = 1 / (omg + ecv + 1j * eta)
-        #    f = w1 - w2  # shape: (nspins, nkpoints, nc, nv)
-        #    g = w1*w1 + w2*w2
-
-        #    gamma_m[iomg] = np.tensordot(f, vm, axes=([0,1,2,3],[0,1,2,3]))  # shape: (3, 3)
-        #    gamma_q[iomg] = np.tensordot(f, vq, axes=([0,1,2,3],[0,1,2,3]))  # shape: (3, 3)
-        #    gamma_v[iomg] = np.tensordot(g, vv, axes=([0,1,2,3],[0,1,2,3])) \
-        #             + np.tensordot(f, vv_corr, axes=([0,1,2,3],[0,1,2,3]))
+            gamma_m += torch.tensordot(f, vm[:,ik,...], dims=([1,2,3], [0,1,2]))  
+            gamma_q += torch.tensordot(f, vq[:,ik,...], dims=([1,2,3], [0,1,2])) 
+            gamma_v += torch.tensordot(g, vv[:,ik,...], dims=([1,2,3], [0,1,2])) \
+                    + torch.tensordot(f, vv_corr[:,ik,...], dims=([1,2,3], [0,1,2]))
 
         # Symmetrize if needed
         if rotations is not None:
@@ -471,43 +453,13 @@ class Electrons:
         _save_gamma(gamma_v, omega, 'v')
         _save_gamma(gamma_total, omega, 'tot')
 
-def _save_gamma(gamma: np.ndarray, omega: np.ndarray, kernel: str) -> None:
+def _save_gamma(gamma: torch.Tensor, omega: torch.Tensor, kernel: str) -> None:
     header = '   E(eV)        YZX            YZY            YZZ            ZXX            ' \
            +   'ZXY            ZXZ            XYX            XYY            XYZ'
     fmt = '%10.5f' + '%20.8f'*9
-    omega = omega[:, None]
-    filr = np.concatenate((omega, gamma.real), axis=1)
-    fili = np.concatenate((omega, gamma.imag), axis=1)
+    omega_np = omega.cpu().numpy()[:, None]
+    gamma_np = gamma.cpu().numpy()
+    filr = np.concatenate((omega_np, gamma_np.real), axis=1)
+    fili = np.concatenate((omega_np, gamma_np.imag), axis=1)
     np.savetxt('gamma_real_'+kernel+'.dat', filr, fmt=fmt, header=header)
     np.savetxt('gamma_imag_'+kernel+'.dat', fili, fmt=fmt, header=header)
-
-
-#@njit(parallel=True)
-def _gamma_frequency_loop(omega, eta, ecv, vm, vq, vv, vv_corr):
-    ne = len(omega)
-    ns, nk, nc, nv = ecv.shape
-    gm = np.zeros((ne, 3, 3), dtype=vm.dtype)
-    gq = np.zeros((ne, 3, 3), dtype=vm.dtype)
-    gv = np.zeros((ne, 3, 3), dtype=vm.dtype)
-
-    for iomg in range(ne):
-        omg = omega[iomg]
-        for isp in range(ns):
-            for ik in range(nk):
-                for ic in range(nc):
-                    for iv in range(nv):
-                        denom1 = omg - ecv[isp, ik, ic, iv] + complex(0.0, eta)
-                        denom2 = omg + ecv[isp, ik, ic, iv] + complex(0.0, eta)
-                        w1 = 1.0 / denom1
-                        w2 = 1.0 / denom2
-                        f = w1 - w2
-                        g = w1*w1 + w2*w2
-                        for a in range(3):
-                            for b in range(3):
-                                gm[iomg, a, b] += f * vm[isp, ik, ic, iv, a, b]
-                                gq[iomg, a, b] += f * vq[isp, ik, ic, iv, a, b]
-                                gv[iomg, a, b] += g * vv[isp, ik, ic, iv, a, b] + f * vv_corr[isp, ik, ic, iv, a, b]
-    return gm, gq, gv
-
-
-    
