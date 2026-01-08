@@ -1,11 +1,13 @@
 import os
 
-# Set environment variables for OpenMP/MKL 
+# Set environment variables for OpenMP/MKL before importing Pytorch
 num_threads = os.cpu_count() or 16  # Fallback to 16 if cpu_count is None
 os.environ["OMP_NUM_THREADS"] = str(num_threads)
 os.environ["MKL_NUM_THREADS"] = str(num_threads)
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Disable GPU
 
 import time
+import torch
 from bloch import Electrons
 from lattice import Lattice
 
