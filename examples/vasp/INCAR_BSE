@@ -1,0 +1,33 @@
+SYSTEM   =   SiO2
+ENCUT    =   500 eV
+PREC     =   N
+LREAL    =   FALSE
+GGA      =   PE
+#NCORE  =  26
+
+# electron
+ISMEAR   =   0
+SIGMA    =   0.05
+EDIFF    =   1.e-8
+
+#ALGO = Exact
+#NELM = 1
+NBANDS = 1024
+#LOPTICS = T
+#LVEL = T
+
+#ALGO = EVGW0R
+#NELMGW = 1
+ENCUTGW = 250
+PRECFOCK = Fast
+#NOMEGA = 16 
+#NBANDSGW = 1024
+#NOMEGA_DUMP = 0
+
+ALGO = BSE
+NBANDSO = 18
+NBANDSV = 24
+NEDOS = 2001
+SCISSOR = 0.51
+
+LWAVE = F
