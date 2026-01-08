@@ -7,7 +7,7 @@
 - `numpy`
 - `spglib` (symmetrization)
 - `phonopy` (reading `POSCAR`)  
-  followings are needed for MPI parallelization of excitons.
+  followings are needed for MPI parallelization of BSE calculations.
 - `MPI4py`
 - `Pyscalapack`
 
