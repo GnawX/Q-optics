@@ -4,7 +4,7 @@
 
 ## Notes
 
-For the current implementation, the only inputs to calculate NOA is single particle energy $E_{n\mathbf{k}}$ and velocity matrix elements $\mathbf{V}_{nm\mathbf{k}}$, as well as exciton envelope $A_{cv\mathbf{k}}^\lambda$ and energy $\Omega_\lambda$ if excitonic effect are to be included.
+For the current implementation, the only inputs to calculate NOA is single particle energy $E_{n\mathbf{k}}$ and velocity matrix elements ${\mathbf{V}}_{nm}$, as well as exciton envelope $A_{cv\mathbf{k}}^\lambda$ and energy $\Omega_\lambda$ if excitonic effect are to be included.
 
 ## Dependencies
 
