@@ -11,9 +11,6 @@ For IPA calculations, we have a Pytorch version (torch branch) which can signifi
 ## Dependencies
 
 - `numpy`
+- `Pytorch`
 - `spglib` (symmetrization)
 - `phonopy` (reading `POSCAR`)  
-  followings are needed for MPI parallelization of BSE calculations.
-- `mpi4py`
-- `PyScalapack`
-
