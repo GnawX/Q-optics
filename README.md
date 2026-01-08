@@ -14,6 +14,6 @@ For IPA calculations, we have a Pytorch version (torch branch) which can signifi
 - `spglib` (symmetrization)
 - `phonopy` (reading `POSCAR`)  
   followings are needed for MPI parallelization of BSE calculations.
-- `MPI4py`
-- `Pyscalapack`
+- `mpi4py`
+- `PyScalapack`
 
