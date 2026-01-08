@@ -1,6 +1,6 @@
 import torch
 import spglib
-from consts_t import ftype
+from consts import ftype
 from ase.io import read as ase_read
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
