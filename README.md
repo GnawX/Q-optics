@@ -6,7 +6,7 @@
 
 - `numpy`
 - `spglib` (symmetrization)
-- `phonopy` (reading `POSCAR`)
+- `phonopy` (reading `POSCAR`)  
   followings are needed for MPI parallelization of excitons.
 - `MPI4py`
 - `Pyscalapack`
