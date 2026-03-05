@@ -10,10 +10,10 @@ For IPA calculations, we have a Pytorch version (torch branch) which can signifi
 
 ## Citation
 
-All the implementated formulations can be found in 
-[X. Wang and Y. Yan, Optical activity of solids from first principles, Phys. Rev. B 107, 045201](https://arxiv.org/abs/2211.09845). 
-X. Wang and Y. Yan, Ab initio GW-BSE theory of optical activity in α-quartz, submitted.
-Please consider citing "X. Wang and Y. Yan, Optical activity of solids from first principles, Phys. Rev. B 107, 045201" for IPA implementation and "X. Wang and Y. Yan, Ab initio GW-BSE theory of optical activity in α-quartz, submitted" for BSE implementation, when you find Q-optics useful in your work.
+All the implementated formulations can be found in  
+- X. Wang and Y. Yan, Optical activity of solids from first principles, Phys. Rev. B 107, 045201. [Arxiv](https://arxiv.org/abs/2211.09845).
+- X. Wang and Y. Yan, Ab initio GW-BSE theory of optical activity in α-quartz, submitted.
+
 
 ## Dependencies
 
