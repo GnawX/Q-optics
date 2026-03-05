@@ -11,7 +11,7 @@ For IPA calculations, we have a Pytorch version (torch branch) which can signifi
 ## Citation
 
 All the implementated formulations can be found in  
-- X. Wang and Y. Yan, Optical activity of solids from first principles, Phys. Rev. B 107, 045201. [Arxiv](https://arxiv.org/abs/2211.09845).
+- X. Wang and Y. Yan, Optical activity of solids from first principles, [Phys. Rev. B 107, 045201](https://journals.aps.org/prb/abstract/10.1103/PhysRevB.107.045201). [Arxiv](https://arxiv.org/abs/2211.09845).
 - X. Wang and Y. Yan, Ab initio GW-BSE theory of optical activity in α-quartz, submitted.
 
 
