@@ -5,7 +5,8 @@
   
 For BSE calculations:
 - Compile VASP with `-Dsingle_prec_bse` and `-DscaLAPACK`.
-- For excitonic effects, one can bypass the GW-BSE calculations using model BSE `LMODELHF`.
+- One can bypass the GW-BSE calculations using model BSE `LMODELHF`.
+
 
 
 
