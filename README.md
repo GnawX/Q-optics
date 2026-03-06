@@ -8,7 +8,7 @@ For the current implementation, the only inputs to calculate NOA are single part
 For IPA calculations, we have a Pytorch version (torch branch) which can significantly improve the efficiency thanks to multithreading or GPU accelaration, whereas for BSE calculations, the mpi version in the main branch is already sufficiently efficient.   
 **The code has not been thoroughly tested. Use at your own risk!**
 
-## Citation
+## Citations
 
 All the implementated formulations can be found in  
 - X. Wang and Y. Yan, Optical activity of solids from first principles, [Phys. Rev. B 107, 045201](https://journals.aps.org/prb/abstract/10.1103/PhysRevB.107.045201). [Arxiv](https://arxiv.org/abs/2211.09845).
