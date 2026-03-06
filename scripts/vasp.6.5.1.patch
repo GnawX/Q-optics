@@ -1,0 +1,399 @@
+diff --git a/src/bse.F b/src/bse.F
+index 2fbdff5..65c9fc1 100644
+--- a/src/bse.F
++++ b/src/bse.F
+@@ -1440,7 +1440,8 @@ ccintegration: DO IALPHA=1,NALPHA
+     IF ( LscaLAPACKaware) THEN
+ #ifdef scaLAPACK
+        CALL WRITE_BSE_SCALA(WHF, ISP_LOW, ISP_HIGH, &
+-            BD, BSE_INDEX, R, AMAT_SCALA, NCV, NBSEEIG, IO%IU6, BSE_DESC)
++            BD, BSE_INDEX, R, AMAT_SCALA, INT(NCV,qi8), INT(NBSEEIG,qi8), IO%IU6, BSE_DESC)
++!            BD, BSE_INDEX, R, AMAT_SCALA, NCV, NBSEEIG, IO%IU6, BSE_DESC)
+ #endif
+     ELSE
+        IF (IO%IU6>=0) THEN
+@@ -5665,7 +5666,11 @@ cp: DO N=1,WHF%WDES%COMM_INTER%NCPU
+     TYPE(bse_matrix_index) :: BSE_INDEX
+     INTEGER :: NCV
+     INTEGER :: NBSEEIG
++#ifdef single_prec_bse
++    COMPLEX(qs) :: EIGVECT(:)
++#else
+     COMPLEX(q) :: EIGVECT(:)
++#endif
+     REAL(q) :: R(:)
+  ! local
+     INTEGER K1,K2,K3,K4,NPOS1,NPOS2,MINL
+@@ -5853,7 +5858,8 @@ cp: DO N=1,WHF%WDES%COMM_INTER%NCPU
+ #else
+     GDEF  :: AMAT(:)
+ #endif
+-    INTEGER :: NCV
++!    INTEGER :: NCV
++    INTEGER(qi8) :: NCV
+     INTEGER :: ANTIRES
+     INTEGER :: IU6
+  ! local
+@@ -5865,24 +5871,120 @@ cp: DO N=1,WHF%WDES%COMM_INTER%NCPU
+     INTEGER I, J, IERR
+     INTEGER     :: LAMBDA
+     INTEGER, OPTIONAL :: DESC(DLEN_)
++    CHARACTER(LEN=30) :: FILENAME
++    INTEGER NK1_IN_KPOINTS_FULL_ORIG(KPOINTS_FULL_ORIG%NKPTS)
++    INTEGER, ALLOCATABLE :: I_GLOBAL(:), J_GLOBAL(:)
+ !MB
++#ifdef single_prec_bse
++    COMPLEX(qs), ALLOCATABLE :: EIGVECT(:)
++#else
+     COMPLEX(q), ALLOCATABLE :: EIGVECT(:)
+-    INTEGER :: NBSEEIG
++#endif
++!    INTEGER :: NBSEEIG
++    INTEGER(qi8) :: NBSEEIG
+ 
+ ! BLACS variables
+     INTEGER, EXTERNAL ::     NUMROC
+     INTEGER MYROW, MYCOL, NPROW, NPCOL, NP,NQ
+-    INTEGER I1RES, J1RES, IROW, JCOL
++!    INTEGER I1RES, J1RES, IROW, JCOL
++    INTEGER(qi8) I1RES, J1RES, IROW, JCOL
+     INTEGER I1, I2, J1, J2
++    INTEGER IUNIT
+ 
+ !Large NBSEEIG value can overrun the memory of a local node.
+-    ALLOCATE(EIGVECT(NBSEEIG*NCV))
+-    EIGVECT=0.0_q
++    !ALLOCATE(EIGVECT(NBSEEIG*NCV))
++    ALLOCATE(EIGVECT(NBSEEIG*NCV),STAT=I1,SOURCE=(0.0,0.0))
++!    EIGVECT=0.0_q
+ 
+     CALL BLACS_GRIDINFO(DESC(CTXT_),NPROW,NPCOL,MYROW,MYCOL)
+     NP = NUMROC(NCV,DESC(MB_),MYROW,0,NPROW)
+     NQ = NUMROC(NCV,DESC(NB_),MYCOL,0,NPCOL)
+ 
++    IF (IU6>=0) THEN
++       OPEN(unit=88, file='EXCEIG', status='UNKNOWN', FORM='UNFORMATTED')
++       WRITE(88) SIZE(R)
++       WRITE(88) BSE_INDEX%NK
++       WRITE(88) BSE_INDEX%N1
++       WRITE(88) BSE_INDEX%N3
++       WRITE(88) BSE_INDEX%ISP
++       WRITE(88) WHF%WDES%VKPT
++       DO I=1,WHF%WDES%NKDIM
++          NK1_IN_KPOINTS_FULL_ORIG(I)=KPOINT_IN_FULL_GRID(WHF%WDES%VKPT(:,I),KPOINTS_FULL_ORIG)
++       ENDDO
++       WRITE(88) NK1_IN_KPOINTS_FULL_ORIG
++       WRITE(88) KPOINTS_FULL_ORIG%NEQUIV
++       WRITE(88) KPOINTS_FULL_ORIG%ISYMOP
++       WRITE(88) KPOINTS_FULL_ORIG%LINV
++       WRITE(88) R
++       CLOSE(88)
++    ENDIF
++
++    ALLOCATE(I_GLOBAL(DESC(LLD_)), J_GLOBAL(NQ))
++    WRITE(FILENAME,'("EXCWAV.",I0)') WHF%WDES%COMM_INTER%NODE_ME
++    OPEN(newunit=IUNIT, file=FILENAME, status='UNKNOWN', FORM='UNFORMATTED')
++    WRITE(IUNIT) DESC(MB_), DESC(NB_), DESC(LLD_), NPROW, NPCOL, MYROW, MYCOL, NP, NQ
++
++! find out the global row and column indices of the orginal matrix
++    DO LAMBDA=1, NCV
++       ! local storage index in block (J1) and local index of block (J2)
++       J1=   ((LAMBDA-DESC(NB_)*MYCOL-1)/(NPCOL*DESC(NB_)))*DESC(NB_)+1
++       J2=MOD((LAMBDA-DESC(NB_)*MYCOL-1) ,NPCOL*DESC(NB_))+1
++
++       JCOL=J1+J2-1
++       IF (J2 <= 0 .OR. J2 > DESC(NB_)) THEN
++          JCOL  =-1
++       ELSE
++          IF (LAMBDA /= DESC(NB_)*MYCOL+NPCOL*(J1-1)+J2) THEN
++             CALL vtutor%bug("internal error in WRITE_BSE_SCALA: " // str(LAMBDA) // " " // &
++                str(DESC(NB_)) // " " // str(NPCOL*(J1-1)) // " " // str(J2), __FILE__, __LINE__)
++          ENDIF
++       ENDIF
++
++       IF (JCOL==-1) THEN
++          ! no data on local node for eigenvector/eigenvalue pair LAMBDA_DONE
++       ELSE
++          IROW=0
++          DO I1=1,NP,DESC(MB_)
++             I1RES=MIN(DESC(MB_),NP-I1+1)
++             DO I2=1,I1RES
++                IROW=IROW+1
++
++                NCV13=DESC(MB_)*MYROW+NPROW*(I1-1)+I2
++                ISP= BSE_INDEX%ISP(NCV13)
++                K1 = BSE_INDEX%NK(NCV13)
++
++                IF (WHF%WDES%WTKPT(K1)==0) CYCLE
++
++                NB1_INTO_TOT=BSE_INDEX%N1(NCV13)
++                N1=NB1_INTO_TOT-BD(ISP)%VBMIN+1
++
++                NB3_INTO_TOT=BSE_INDEX%N3(NCV13)
++                N3=NB3_INTO_TOT-BD(ISP)%CBMIN+1
++
++                IF (NCV13/=BSE_INDEX%INDEX(NB1_INTO_TOT-BD(ISP)%VBMIN+1, NB3_INTO_TOT-BD(ISP)%CBMIN+1, K1, ISP -ISP_LOW+1)) THEN
++                   CALL vtutor%bug("internal error in WRITE_BSE_SCALA: " // str(NCV13) // " " // &
++                      str(NB1_INTO_TOT-BD(ISP)%VBMIN+1) // " " // str(NB3_INTO_TOT) // " " // str(K1) // " "&
++                       // str(ISP) // " " // str(BSE_INDEX%INDEX(NB1_INTO_TOT-BD(ISP)%VBMIN+1,&
++                      NB3_INTO_TOT-BD(ISP)%CBMIN+1,K1,ISP -ISP_LOW+1)), __FILE__, __LINE__)
++                ENDIF
++
++                IF (FILLED_XI_ORBITAL(WHF%FERTOT(NB3_INTO_TOT,K1,ISP))) CYCLE
++                IF (EMPTY_XI_ORBITAL(WHF%FERTOT(NB1_INTO_TOT,K1,ISP)))  CYCLE
++
++                I_GLOBAL(IROW) = NCV13
++                J_GLOBAL(JCOL) = LAMBDA
++
++             ENDDO
++          ENDDO
++       ENDIF
++    ENDDO
++
++    WRITE(IUNIT) I_GLOBAL
++    WRITE(IUNIT) J_GLOBAL
++    WRITE(IUNIT) AMAT
++    CLOSE(IUNIT)
++    DEALLOCATE(I_GLOBAL, J_GLOBAL)
++
+ !   loop over column indices (eigenvectors)
+     DO LAMBDA=1, NBSEEIG
+        ! local storage index in block (J1) and local index of block (J2)
+@@ -5938,7 +6040,11 @@ cp: DO N=1,WHF%WDES%COMM_INTER%NCPU
+ 
+ !Gather all parts of the eigenvectors stored on the different nodes
+ !    CALLMPI( M_sum_z(WHF%WDES%COMM, EIGVECT, NBSEEIG*NCV))
+-    CALLMPI( M_sum_z(WHF%WDES%COMM_INTER, EIGVECT, NBSEEIG*NCV))
++!    CALLMPI( M_sum_z(WHF%WDES%COMM_INTER, EIGVECT, NBSEEIG*NCV))
++#ifdef single_prec_bse
++    CALLMPI( M_sum_single8(WHF%WDES%COMM_INTER, EIGVECT, SIZE(EIGVECT,KIND=qi8)*2))
++#else
++    CALLMPI( M_sum_z8(WHF%WDES%COMM_INTER, EIGVECT, SIZE(EIGVECT,KIND=qi8)))
+     IF (IU6>=0) CALL WRITE_BSE(WHF,NCV,BSE_INDEX,EIGVECT,R,NBSEEIG)
+       
+     DEALLOCATE(EIGVECT)
+diff --git a/src/linear_optics.F b/src/linear_optics.F
+index 50db074..31a3767 100644
+--- a/src/linear_optics.F
++++ b/src/linear_optics.F
+@@ -783,6 +783,14 @@ CONTAINS
+     CALLMPI( M_sum_d(WDES%COMM_KINTER, ENERGY_DER, SIZE(ENERGY_DER)))
+     CALL DEALLOCW(W1)
+ 
++    IF (IO%IU0>0) THEN
++       OPEN(UNIT=666,FILE=DIR_APP(1:DIR_LEN)//'EIGDER', &
++              FORM='UNFORMATTED',STATUS='UNKNOWN')
++       WRITE(666) WDES%NB_TOT, WDES%NKPTS, WDES%ISPIN
++       WRITE(666) ENERGY_DER
++       CLOSE(666)
++    ENDIF 
++
+   END SUBROUTINE LRF_EPSILON_MELS
+ 
+   !=============================LRF_EPSILON_COMPUTE============================
+diff --git a/src/bse.F b/src/bse.F
+index 65c9fc1..f3d6c4e 100644
+--- a/src/bse.F
++++ b/src/bse.F
+@@ -6045,6 +6045,7 @@ cp: DO N=1,WHF%WDES%COMM_INTER%NCPU
+     CALLMPI( M_sum_single8(WHF%WDES%COMM_INTER, EIGVECT, SIZE(EIGVECT,KIND=qi8)*2))
+ #else
+     CALLMPI( M_sum_z8(WHF%WDES%COMM_INTER, EIGVECT, SIZE(EIGVECT,KIND=qi8)))
++#endif
+     IF (IU6>=0) CALL WRITE_BSE(WHF,NCV,BSE_INDEX,EIGVECT,R,NBSEEIG)
+       
+     DEALLOCATE(EIGVECT)
+diff --git a/src/bse_driver.F b/src/bse_driver.F
+index 7a10da9..0f42d98 100644
+--- a/src/bse_driver.F
++++ b/src/bse_driver.F
+@@ -1583,12 +1583,14 @@ GPACC   POP_OFFLOAD_ON
+ !==========================================================================
+ ! BSEFATBANDS
+ !==========================================================================
+-    IF (IBSE==2 .AND. NBSEEIG > 0) THEN
++!   IF (IBSE==2 .AND. NBSEEIG > 0) THEN
++    IF (IBSE==2) THEN
+     IF (IO%IU0>=0) WRITE(IO%IU0,"(A17,I6,A13)") ' BSE writing out ',NBSEEIG,' eigenvectors'
+ 
+ !$ACC UPDATE SELF(AMAT_SCALA) IF(OFFLOAD_ON)
+     CALL WRITE_BSE_SCALA(WHF, ISP_LOW, ISP_HIGH, &
+-            BD, BSE_INDEX, R, AMAT_SCALA, NCV, NBSEEIG, IO%IU6, BSE_DESC)
++!            BD, BSE_INDEX, R, AMAT_SCALA, NCV, NBSEEIG, IO%IU6, BSE_DESC)
++             BD, BSE_INDEX, R, AMAT_SCALA, INT(NCV,qi8), INT(NBSEEIG,qi8), IO%IU6, BSE_DESC)
+ #ifdef VASP_HDF5
+     CALL VH5_WRITE_BSEINDEX(IH5OUTFILEID, BSE_INDEX%INDEX)
+     CALL VH5_WRITE_BSEBANDS(IH5OUTFILEID, BD, EFERMI)
+@@ -4519,7 +4521,11 @@ cp: DO N=1,NCPU
+     TYPE(bse_matrix_index) :: BSE_INDEX
+     INTEGER :: NCV
+     INTEGER :: NBSEEIG
++#ifdef single_prec_bse
++    COMPLEX(qs) :: EIGVECT(:)
++#else
+     COMPLEX(q) :: EIGVECT(:)
++#endif
+     REAL(q) :: R(:)
+  ! local
+     INTEGER K1,K2,K3,K4,NPOS1,NPOS2,MINL
+@@ -4604,7 +4610,8 @@ cp: DO N=1,NCPU
+ #else
+     GDEF  :: AMAT(:)
+ #endif
+-    INTEGER :: NCV
++ !   INTEGER :: NCV
++     INTEGER(qi8) :: NCV
+     INTEGER :: ANTIRES
+     INTEGER :: IU6
+  ! local
+@@ -4616,24 +4623,120 @@ cp: DO N=1,NCPU
+     INTEGER I, J, IERR
+     INTEGER     :: LAMBDA
+     INTEGER, OPTIONAL :: DESC(DLEN_)
++    CHARACTER(LEN=30) :: FILENAME
++    INTEGER NK1_IN_KPOINTS_FULL_ORIG(KPOINTS_FULL_ORIG%NKPTS)
++    INTEGER, ALLOCATABLE :: I_GLOBAL(:), J_GLOBAL(:)
+ !MB
++#ifdef single_prec_bse
++    COMPLEX(qs), ALLOCATABLE :: EIGVECT(:)
++#else
+     COMPLEX(q), ALLOCATABLE :: EIGVECT(:)
+-    INTEGER :: NBSEEIG
++#endif
++!    INTEGER :: NBSEEIG
++     INTEGER(qi8) :: NBSEEIG
+ 
+ ! BLACS variables
+     INTEGER, EXTERNAL ::     NUMROC
+     INTEGER MYROW, MYCOL, NPROW, NPCOL, NP,NQ
+-    INTEGER I1RES, J1RES, IROW, JCOL
++!    INTEGER I1RES, J1RES, IROW, JCOL
++    INTEGER(qi8) I1RES, J1RES, IROW, JCOL
+     INTEGER I1, I2, J1, J2
++    INTEGER IUNIT
+ 
+ !Large NBSEEIG value can overrun the memory of a local node.
+-    ALLOCATE(EIGVECT(NBSEEIG*NCV))
+-    EIGVECT=0.0_q
++    ALLOCATE(EIGVECT(NBSEEIG*NCV),STAT=I1,SOURCE=(0.0,0.0))
++!    ALLOCATE(EIGVECT(NBSEEIG*NCV))
++!    EIGVECT=0.0_q
+ 
+     CALL BLACS_GRIDINFO(DESC(CTXT_),NPROW,NPCOL,MYROW,MYCOL)
+     NP = NUMROC(NCV,DESC(MB_),MYROW,0,NPROW)
+     NQ = NUMROC(NCV,DESC(NB_),MYCOL,0,NPCOL)
+ 
++    IF (IU6>=0) THEN
++       OPEN(unit=88, file='EXCEIG', status='UNKNOWN', FORM='UNFORMATTED')
++       WRITE(88) SIZE(R)
++       WRITE(88) BSE_INDEX%NK
++       WRITE(88) BSE_INDEX%N1
++       WRITE(88) BSE_INDEX%N3
++       WRITE(88) BSE_INDEX%ISP
++       WRITE(88) WHF%WDES%VKPT
++       DO I=1,WHF%WDES%NKDIM
++          NK1_IN_KPOINTS_FULL_ORIG(I)=KPOINT_IN_FULL_GRID(WHF%WDES%VKPT(:,I),KPOINTS_FULL_ORIG)
++       ENDDO
++       WRITE(88) NK1_IN_KPOINTS_FULL_ORIG
++       WRITE(88) KPOINTS_FULL_ORIG%NEQUIV
++       WRITE(88) KPOINTS_FULL_ORIG%ISYMOP
++       WRITE(88) KPOINTS_FULL_ORIG%LINV
++       WRITE(88) R
++       CLOSE(88)
++    ENDIF
++
++    ALLOCATE(I_GLOBAL(DESC(LLD_)), J_GLOBAL(NQ))
++    WRITE(FILENAME,'("EXCWAV.",I0)') WHF%WDES%COMM_INTER%NODE_ME
++    OPEN(newunit=IUNIT, file=FILENAME, status='UNKNOWN', FORM='UNFORMATTED')
++    WRITE(IUNIT) DESC(MB_), DESC(NB_), DESC(LLD_), NPROW, NPCOL, MYROW, MYCOL, NP, NQ
++
++! find out the global row and column indices of the orginal matrix
++    DO LAMBDA=1, NCV
++       ! local storage index in block (J1) and local index of block (J2)
++       J1=   ((LAMBDA-DESC(NB_)*MYCOL-1)/(NPCOL*DESC(NB_)))*DESC(NB_)+1
++       J2=MOD((LAMBDA-DESC(NB_)*MYCOL-1) ,NPCOL*DESC(NB_))+1
++
++       JCOL=J1+J2-1
++       IF (J2 <= 0 .OR. J2 > DESC(NB_)) THEN
++          JCOL  =-1
++       ELSE
++          IF (LAMBDA /= DESC(NB_)*MYCOL+NPCOL*(J1-1)+J2) THEN
++             CALL vtutor%bug("internal error in WRITE_BSE_SCALA: " // str(LAMBDA) // " " // &
++                str(DESC(NB_)) // " " // str(NPCOL*(J1-1)) // " " // str(J2), __FILE__, __LINE__)
++          ENDIF
++       ENDIF
++
++       IF (JCOL==-1) THEN
++          ! no data on local node for eigenvector/eigenvalue pair LAMBDA_DONE
++       ELSE
++          IROW=0
++          DO I1=1,NP,DESC(MB_)
++             I1RES=MIN(DESC(MB_),NP-I1+1)
++             DO I2=1,I1RES
++                IROW=IROW+1
++
++                NCV13=DESC(MB_)*MYROW+NPROW*(I1-1)+I2
++                ISP= BSE_INDEX%ISP(NCV13)
++                K1 = BSE_INDEX%NK(NCV13)
++
++                IF (WHF%WDES%WTKPT(K1)==0) CYCLE
++
++                NB1_INTO_TOT=BSE_INDEX%N1(NCV13)
++                N1=NB1_INTO_TOT-BD(ISP)%VBMIN+1
++
++                NB3_INTO_TOT=BSE_INDEX%N3(NCV13)
++                N3=NB3_INTO_TOT-BD(ISP)%CBMIN+1
++
++                IF (NCV13/=BSE_INDEX%INDEX(NB1_INTO_TOT-BD(ISP)%VBMIN+1, NB3_INTO_TOT-BD(ISP)%CBMIN+1, K1, ISP -ISP_LOW+1)) THEN
++                   CALL vtutor%bug("internal error in WRITE_BSE_SCALA: " // str(NCV13) // " " // &
++                      str(NB1_INTO_TOT-BD(ISP)%VBMIN+1) // " " // str(NB3_INTO_TOT) // " " // str(K1) // " "&
++                       // str(ISP) // " " // str(BSE_INDEX%INDEX(NB1_INTO_TOT-BD(ISP)%VBMIN+1,&
++                      NB3_INTO_TOT-BD(ISP)%CBMIN+1,K1,ISP -ISP_LOW+1)), __FILE__, __LINE__)
++                ENDIF
++
++                IF (FILLED_XI_ORBITAL(WHF%FERTOT(NB3_INTO_TOT,K1,ISP))) CYCLE
++                IF (EMPTY_XI_ORBITAL(WHF%FERTOT(NB1_INTO_TOT,K1,ISP)))  CYCLE
++
++                I_GLOBAL(IROW) = NCV13
++                J_GLOBAL(JCOL) = LAMBDA
++
++             ENDDO
++          ENDDO
++       ENDIF
++    ENDDO
++
++    WRITE(IUNIT) I_GLOBAL
++    WRITE(IUNIT) J_GLOBAL
++    WRITE(IUNIT) AMAT
++    CLOSE(IUNIT)
++    DEALLOCATE(I_GLOBAL, J_GLOBAL)
++
+     IF(MYCOL /= -1 .OR. MYROW /= -1) THEN
+        ! loop over column indices (eigenvectors)
+        DO LAMBDA=1, NBSEEIG
+@@ -4690,7 +4793,12 @@ cp: DO N=1,NCPU
+     ENDIF
+ 
+ !Gather all parts of the eigenvectors stored on the different nodes
+-    CALLMPI( M_sum_z(WHF%WDES%COMM, EIGVECT, NBSEEIG*NCV))
++!    CALLMPI( M_sum_z(WHF%WDES%COMM, EIGVECT, NBSEEIG*NCV))
++#ifdef single_prec_bse
++    CALLMPI( M_sum_single8(WHF%WDES%COMM_INTER, EIGVECT, SIZE(EIGVECT,KIND=qi8)*2))
++#else
++    CALLMPI( M_sum_z8(WHF%WDES%COMM_INTER, EIGVECT, SIZE(EIGVECT,KIND=qi8)))
++#endif
+     IF (IU6>=0) CALL WRITE_BSE(WHF,NCV,BSE_INDEX,EIGVECT,R,NBSEEIG)
+       
+     DEALLOCATE(EIGVECT)
+diff --git a/src/linear_optics.F b/src/linear_optics.F
+index 31a3767..886a3b3 100644
+--- a/src/linear_optics.F
++++ b/src/linear_optics.F
+@@ -674,6 +674,7 @@ CONTAINS
+     USE mlrf_main, ONLY  : LRF_RPHI0
+     USE msymmetry
+     USE pead, ONLY : PEAD_DPSI_DK_IDIR
++    USE main_mpi
+     !USE kpoints_change
+     !USE fock
+     IMPLICIT NONE
