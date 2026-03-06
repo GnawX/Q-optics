@@ -1,6 +1,7 @@
 # Setup for VASP calculations.
 
 - Apply the patch in `\scripts` to generate `EIGDER`, `EXCEIG`, `EXCWAV` files.
+  - `patch -p1 < vasp.6.5.1.patch`
 - Set `LVEL = T` for `LOPTICS` calculations.
   
 For BSE calculations:
@@ -8,6 +9,7 @@ For BSE calculations:
 - One can bypass the GW-BSE calculations using model BSE `LMODELHF`.
 
 Use python scripts in `\scripts` to calculate NOA.
+
 
 
 
