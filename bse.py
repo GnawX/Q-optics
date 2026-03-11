@@ -3,7 +3,7 @@ from pathlib import Path
 import logging
 from consts import ftype, ctype, C_LIGHT, AU2A, AU2EV, PI
 from helper import readData, symmetrize_axial_tensor
-from kgrid import get_k_grid_and_spacing, setup_kq_grid_fd
+#from kgrid import get_k_grid_and_spacing, setup_kq_grid_fd
 
 logging.basicConfig(level=logging.INFO)
 
